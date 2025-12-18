@@ -8,15 +8,15 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-
-  //  Middleware
-
+/* ======================
+   MIDDLEWARE
+====================== */
 app.use(cors());
 app.use(express.json());
 
-
-  //  MongoDB Connection
-
+/* ======================
+   MONGODB CONNECTION
+====================== */
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wemtzez.mongodb.net/${process.env.DB_NAME}?retryWrites=true&w=majority&appName=Cluster0`;
 
 const client = new MongoClient(uri, {
@@ -28,143 +28,153 @@ const client = new MongoClient(uri, {
 });
 
 let issuesCollection;
+let usersCollection;
 
 async function connectDB() {
   try {
     await client.connect();
     const db = client.db(process.env.DB_NAME);
+
     issuesCollection = db.collection("issues");
+    usersCollection = db.collection("users");
+
     console.log("✅ MongoDB connected successfully");
   } catch (error) {
     console.error("❌ MongoDB connection failed:", error.message);
   }
 }
-
 connectDB();
 
-
+/* ======================
+   ROOT
+====================== */
 app.get("/", (req, res) => {
   res.send("🚀 CityFix API is running");
 });
 
+/* ======================
+   USERS API (ROLE SYSTEM)
+====================== */
 
+// Save user (register / google login)
+app.post("/users", async (req, res) => {
+  const user = req.body;
+
+  const existingUser = await usersCollection.findOne({ email: user.email });
+  if (existingUser) {
+    return res.send({ message: "User already exists" });
+  }
+
+  const result = await usersCollection.insertOne({
+    ...user,
+    role: user.role || "citizen",
+    createdAt: new Date(),
+  });
+
+  res.send(result);
+});
+
+// Get user by email (for role)
+app.get("/users/:email", async (req, res) => {
+  const email = req.params.email;
+  const user = await usersCollection.findOne({ email });
+  res.send(user);
+});
+
+/* ======================
+   ISSUES API
+====================== */
 
 // Get all issues
 app.get("/issues", async (req, res) => {
   try {
     const issues = await issuesCollection.find().toArray();
     res.send(issues);
-  } catch (error) {
+  } catch {
     res.status(500).send({ message: "Failed to fetch issues" });
   }
 });
 
-// Get single issue by ID
+// Get single issue
 app.get("/issues/:id", async (req, res) => {
   try {
-    const id = req.params.id;
-    const issue = await issuesCollection.findOne({ _id: new ObjectId(id) });
+    const issue = await issuesCollection.findOne({
+      _id: new ObjectId(req.params.id),
+    });
     res.send(issue);
-  } catch (error) {
+  } catch {
     res.status(500).send({ message: "Failed to fetch issue" });
   }
 });
 
-// Create new issue
+// Create issue
 app.post("/issues", async (req, res) => {
-  try {
-    const issue = {
-      ...req.body,
-      createdAt: new Date(),
-    };
-    const result = await issuesCollection.insertOne(issue);
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to create issue" });
-  }
+  const issue = {
+    ...req.body,
+    upvotes: 0,
+    upvotedBy: [],
+    createdAt: new Date(),
+  };
+
+  const result = await issuesCollection.insertOne(issue);
+  res.send(result);
 });
 
 // Update issue status
 app.patch("/issues/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const { status } = req.body;
+  const { status } = req.body;
 
-    const result = await issuesCollection.updateOne(
-      { _id: new ObjectId(id) },
-      { $set: { status } }
-    );
+  const result = await issuesCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
 
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to update issue" });
-  }
+  res.send(result);
 });
 
 // Delete issue
 app.delete("/issues/:id", async (req, res) => {
-  try {
-    const id = req.params.id;
-    const result = await issuesCollection.deleteOne({
-      _id: new ObjectId(id),
-    });
-    res.send(result);
-  } catch (error) {
-    res.status(500).send({ message: "Failed to delete issue" });
-  }
+  const result = await issuesCollection.deleteOne({
+    _id: new ObjectId(req.params.id),
+  });
+  res.send(result);
 });
 
-// Upvote an issue
+// Upvote issue
 app.patch("/issues/upvote/:id", async (req, res) => {
-  try {
-    const issueId = req.params.id;
-    const { userId } = req.body;
+  const { userId } = req.body;
+  const issueId = req.params.id;
 
-    if (!userId) {
-      return res.status(400).send({ message: "User ID required" });
-    }
+  const issue = await issuesCollection.findOne({
+    _id: new ObjectId(issueId),
+  });
 
-    const issue = await issuesCollection.findOne({
-      _id: new ObjectId(issueId),
-    });
-
-    if (!issue) {
-      return res.status(404).send({ message: "Issue not found" });
-    }
-
-    if (issue.authorId === userId) {
-      return res
-        .status(403)
-        .send({ message: "You cannot upvote your own issue" });
-    }
-
-    if (issue.upvotedBy?.includes(userId)) {
-      return res
-        .status(409)
-        .send({ message: "You already upvoted this issue" });
-    }
-
-    const result = await issuesCollection.updateOne(
-      { _id: new ObjectId(issueId) },
-      {
-        $inc: { upvotes: 1 },
-        $push: { upvotedBy: userId },
-      }
-    );
-
-    res.send({
-      success: true,
-      message: "Upvote added successfully",
-      result,
-    });
-  } catch (error) {
-    res.status(500).send({ message: "Upvote failed" });
+  if (!issue) {
+    return res.status(404).send({ message: "Issue not found" });
   }
+
+  if (issue.authorId === userId) {
+    return res.status(403).send({ message: "Cannot upvote own issue" });
+  }
+
+  if (issue.upvotedBy.includes(userId)) {
+    return res.status(409).send({ message: "Already upvoted" });
+  }
+
+  await issuesCollection.updateOne(
+    { _id: new ObjectId(issueId) },
+    {
+      $inc: { upvotes: 1 },
+      $push: { upvotedBy: userId },
+    }
+  );
+
+  res.send({ success: true });
 });
 
-
-  //  Server Start
-
+/* ======================
+   SERVER START
+====================== */
 app.listen(port, () => {
   console.log(`🔥 CityFix server running on port ${port}`);
 });
