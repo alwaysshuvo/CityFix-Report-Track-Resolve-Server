@@ -137,6 +137,68 @@ app.get("/issues/staff/:email", async (req, res) => {
 
   res.send(issues);
 });
+// Assign staff to issue (ADMIN)
+app.patch("/issues/assign/:id", async (req, res) => {
+  const issueId = req.params.id;
+  const { staffEmail, staffName } = req.body;
+
+  const result = await issuesCollection.updateOne(
+    { _id: new ObjectId(issueId) },
+    {
+      $set: {
+        assignedStaff: {
+          email: staffEmail,
+          name: staffName,
+        },
+        status: "in-progress",
+      },
+    }
+  );
+
+  res.send(result);
+});
+// Get issues for staff
+app.get("/issues/staff/:email", async (req, res) => {
+  const email = req.params.email;
+
+  const issues = await issuesCollection
+    .find({ "assignedStaff.email": email })
+    .toArray();
+
+  res.send(issues);
+});
+
+// Get issues assigned to staff
+app.get("/issues/staff/:email", async (req, res) => {
+  const email = req.params.email;
+
+  const issues = await issuesCollection
+    .find({ "assignedStaff.email": email })
+    .toArray();
+
+  res.send(issues);
+});
+// Assign staff to an issue (Admin)
+app.patch("/issues/assign/:id", async (req, res) => {
+  const issueId = req.params.id;
+  const staff = req.body; 
+
+  if (!staff?.email) {
+    return res.status(400).send({ message: "Staff info required" });
+  }
+
+  const result = await issuesCollection.updateOne(
+    { _id: new ObjectId(issueId) },
+    {
+      $set: {
+        assignedStaff: staff,
+        status: "pending",
+      },
+    }
+  );
+
+  res.send(result);
+});
 
 /* ======================
    ISSUES API
