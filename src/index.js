@@ -79,7 +79,7 @@ app.post("/users", async (req, res) => {
     });
 
     res.send(result);
-  } catch (error) {
+  } catch {
     res.status(500).send({ message: "Failed to save user" });
   }
 });
@@ -101,71 +101,71 @@ app.get("/users/admin/:email", async (req, res) => {
   res.send({ admin: user?.role === "admin" });
 });
 
-// Assign staff to an issue (ADMIN)
-app.patch("/issues/assign/:id", async (req, res) => {
-  try {
-    const issueId = req.params.id;
-    const { staffId, name, email } = req.body;
+/* ======================
+   ISSUES API
+====================== */
 
-    if (!staffId || !email) {
-      return res.status(400).send({ message: "Staff info required" });
-    }
-
-    const result = await issuesCollection.updateOne(
-      { _id: new ObjectId(issueId) },
-      {
-        $set: {
-          assignedStaff: { staffId, name, email },
-          status: "in-progress",
-        },
-      }
-    );
-
-    res.send({ success: true, result });
-  } catch (error) {
-    res.status(500).send({ message: "Failed to assign staff" });
-  }
-});
-
-// Get issues assigned to a staff
-app.get("/issues/staff/:email", async (req, res) => {
-  const email = req.params.email;
-
-  const issues = await issuesCollection
-    .find({ "assignedStaff.email": email })
-    .toArray();
-
+// Get all issues
+app.get("/issues", async (req, res) => {
+  const issues = await issuesCollection.find().toArray();
   res.send(issues);
 });
-// Assign staff to issue (ADMIN)
+
+// Get single issue
+app.get("/issues/:id", async (req, res) => {
+  const issue = await issuesCollection.findOne({
+    _id: new ObjectId(req.params.id),
+  });
+  res.send(issue);
+});
+
+// Create issue
+app.post("/issues", async (req, res) => {
+  const issue = {
+    ...req.body,
+    status: "pending",
+    priority: req.body.priority || "normal",
+    upvotes: 0,
+    upvotedBy: [],
+    createdAt: new Date(),
+  };
+
+  const result = await issuesCollection.insertOne(issue);
+  res.send(result);
+});
+
+// Update issue status (Staff/Admin)
+app.patch("/issues/status/:id", async (req, res) => {
+  const { status } = req.body;
+
+  const result = await issuesCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+
+  res.send(result);
+});
+
+// Assign staff (ADMIN)
 app.patch("/issues/assign/:id", async (req, res) => {
   const issueId = req.params.id;
-  const { staffEmail, staffName } = req.body;
+  const staff = req.body; // { name, email }
+
+  if (!staff?.email) {
+    return res.status(400).send({ message: "Staff info required" });
+  }
 
   const result = await issuesCollection.updateOne(
     { _id: new ObjectId(issueId) },
     {
       $set: {
-        assignedStaff: {
-          email: staffEmail,
-          name: staffName,
-        },
+        assignedStaff: staff,
         status: "in-progress",
       },
     }
   );
 
-  res.send(result);
-});
-// Get issues for staff
-app.get("/issues/staff/:email", async (req, res) => {
-  const email = req.params.email;
-
-  const issues = await issuesCollection
-    .find({ "assignedStaff.email": email })
-    .toArray();
-
-  res.send(issues);
+  res.send({ success: true, result });
 });
 
 // Get issues assigned to staff
@@ -177,78 +177,6 @@ app.get("/issues/staff/:email", async (req, res) => {
     .toArray();
 
   res.send(issues);
-});
-// Assign staff to an issue (Admin)
-app.patch("/issues/assign/:id", async (req, res) => {
-  const issueId = req.params.id;
-  const staff = req.body; 
-
-  if (!staff?.email) {
-    return res.status(400).send({ message: "Staff info required" });
-  }
-
-  const result = await issuesCollection.updateOne(
-    { _id: new ObjectId(issueId) },
-    {
-      $set: {
-        assignedStaff: staff,
-        status: "pending",
-      },
-    }
-  );
-
-  res.send(result);
-});
-
-/* ======================
-   ISSUES API
-====================== */
-
-// Get all issues
-app.get("/issues", async (req, res) => {
-  try {
-    const issues = await issuesCollection.find().toArray();
-    res.send(issues);
-  } catch {
-    res.status(500).send({ message: "Failed to fetch issues" });
-  }
-});
-
-// Get single issue
-app.get("/issues/:id", async (req, res) => {
-  try {
-    const issue = await issuesCollection.findOne({
-      _id: new ObjectId(req.params.id),
-    });
-    res.send(issue);
-  } catch {
-    res.status(500).send({ message: "Failed to fetch issue" });
-  }
-});
-
-// Create issue
-app.post("/issues", async (req, res) => {
-  const issue = {
-    ...req.body,
-    upvotes: 0,
-    upvotedBy: [],
-    createdAt: new Date(),
-  };
-
-  const result = await issuesCollection.insertOne(issue);
-  res.send(result);
-});
-
-// Update issue status
-app.patch("/issues/:id", async (req, res) => {
-  const { status } = req.body;
-
-  const result = await issuesCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: { status } }
-  );
-
-  res.send(result);
 });
 
 // Delete issue
