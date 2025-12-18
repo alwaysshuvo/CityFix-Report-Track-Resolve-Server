@@ -56,29 +56,46 @@ app.get("/", (req, res) => {
    USERS API (ROLE SYSTEM)
 ====================== */
 
-// Save user (register / google login)
+// Save user (Register / Google Login)
 app.post("/users", async (req, res) => {
-  const user = req.body;
+  try {
+    const user = req.body;
 
-  const existingUser = await usersCollection.findOne({ email: user.email });
-  if (existingUser) {
-    return res.send({ message: "User already exists" });
+    const existingUser = await usersCollection.findOne({ email: user.email });
+    if (existingUser) {
+      return res.send({ message: "User already exists" });
+    }
+
+    const role =
+      user.email === process.env.ADMIN_EMAIL ? "admin" : "citizen";
+
+    const result = await usersCollection.insertOne({
+      ...user,
+      role,
+      createdAt: new Date(),
+    });
+
+    res.send(result);
+  } catch {
+    res.status(500).send({ message: "Failed to save user" });
   }
-
-  const result = await usersCollection.insertOne({
-    ...user,
-    role: user.role || "citizen",
-    createdAt: new Date(),
-  });
-
-  res.send(result);
 });
 
-// Get user by email (for role)
+// Get user by email
 app.get("/users/:email", async (req, res) => {
-  const email = req.params.email;
-  const user = await usersCollection.findOne({ email });
+  const user = await usersCollection.findOne({
+    email: req.params.email,
+  });
   res.send(user);
+});
+
+// Admin check (IMPORTANT)
+app.get("/users/admin/:email", async (req, res) => {
+  const user = await usersCollection.findOne({
+    email: req.params.email,
+  });
+
+  res.send({ admin: user?.role === "admin" });
 });
 
 /* ======================
@@ -143,10 +160,9 @@ app.delete("/issues/:id", async (req, res) => {
 // Upvote issue
 app.patch("/issues/upvote/:id", async (req, res) => {
   const { userId } = req.body;
-  const issueId = req.params.id;
 
   const issue = await issuesCollection.findOne({
-    _id: new ObjectId(issueId),
+    _id: new ObjectId(req.params.id),
   });
 
   if (!issue) {
@@ -162,7 +178,7 @@ app.patch("/issues/upvote/:id", async (req, res) => {
   }
 
   await issuesCollection.updateOne(
-    { _id: new ObjectId(issueId) },
+    { _id: new ObjectId(req.params.id) },
     {
       $inc: { upvotes: 1 },
       $push: { upvotedBy: userId },
