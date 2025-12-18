@@ -53,7 +53,7 @@ app.get("/", (req, res) => {
 });
 
 /* ======================
-   USERS API (ROLE SYSTEM)
+   USERS API
 ====================== */
 
 // Save user (Register / Google Login)
@@ -61,7 +61,10 @@ app.post("/users", async (req, res) => {
   try {
     const user = req.body;
 
-    const existingUser = await usersCollection.findOne({ email: user.email });
+    const existingUser = await usersCollection.findOne({
+      email: user.email,
+    });
+
     if (existingUser) {
       return res.send({ message: "User already exists" });
     }
@@ -76,7 +79,7 @@ app.post("/users", async (req, res) => {
     });
 
     res.send(result);
-  } catch {
+  } catch (error) {
     res.status(500).send({ message: "Failed to save user" });
   }
 });
@@ -89,13 +92,50 @@ app.get("/users/:email", async (req, res) => {
   res.send(user);
 });
 
-// Admin check (IMPORTANT)
+// Admin check
 app.get("/users/admin/:email", async (req, res) => {
   const user = await usersCollection.findOne({
     email: req.params.email,
   });
 
   res.send({ admin: user?.role === "admin" });
+});
+
+// Assign staff to an issue (ADMIN)
+app.patch("/issues/assign/:id", async (req, res) => {
+  try {
+    const issueId = req.params.id;
+    const { staffId, name, email } = req.body;
+
+    if (!staffId || !email) {
+      return res.status(400).send({ message: "Staff info required" });
+    }
+
+    const result = await issuesCollection.updateOne(
+      { _id: new ObjectId(issueId) },
+      {
+        $set: {
+          assignedStaff: { staffId, name, email },
+          status: "in-progress",
+        },
+      }
+    );
+
+    res.send({ success: true, result });
+  } catch (error) {
+    res.status(500).send({ message: "Failed to assign staff" });
+  }
+});
+
+// Get issues assigned to a staff
+app.get("/issues/staff/:email", async (req, res) => {
+  const email = req.params.email;
+
+  const issues = await issuesCollection
+    .find({ "assignedStaff.email": email })
+    .toArray();
+
+  res.send(issues);
 });
 
 /* ======================
