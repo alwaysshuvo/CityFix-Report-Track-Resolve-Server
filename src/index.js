@@ -27,16 +27,16 @@ const client = new MongoClient(uri, {
   },
 });
 
-let issuesCollection;
 let usersCollection;
+let issuesCollection;
 
 async function connectDB() {
   try {
     await client.connect();
     const db = client.db(process.env.DB_NAME);
 
-    issuesCollection = db.collection("issues");
     usersCollection = db.collection("users");
+    issuesCollection = db.collection("issues");
 
     console.log("✅ MongoDB connected successfully");
   } catch (error) {
@@ -66,25 +66,28 @@ app.post("/users", async (req, res) => {
     });
 
     if (existingUser) {
-      return res.send({ message: "User already exists" });
+      return res.send(existingUser);
     }
 
     const role =
-      user.email === process.env.ADMIN_EMAIL ? "admin" : "citizen";
+      user.email === process.env.ADMIN_EMAIL
+        ? "admin"
+        : user.role || "citizen";
 
-    const result = await usersCollection.insertOne({
+    const newUser = {
       ...user,
       role,
       createdAt: new Date(),
-    });
+    };
 
+    const result = await usersCollection.insertOne(newUser);
     res.send(result);
   } catch {
     res.status(500).send({ message: "Failed to save user" });
   }
 });
 
-// Get user by email
+// Get user by email (role check)
 app.get("/users/:email", async (req, res) => {
   const user = await usersCollection.findOne({
     email: req.params.email,
@@ -92,18 +95,44 @@ app.get("/users/:email", async (req, res) => {
   res.send(user);
 });
 
-// Admin check
-app.get("/users/admin/:email", async (req, res) => {
-  const user = await usersCollection.findOne({
-    email: req.params.email,
-  });
+// Get all staff (ADMIN)
+app.get("/staff", async (req, res) => {
+  const staffs = await usersCollection
+    .find({ role: "staff" })
+    .toArray();
+  res.send(staffs);
+});
 
-  res.send({ admin: user?.role === "admin" });
+// Update staff status (ADMIN)
+app.patch("/staff/status/:id", async (req, res) => {
+  const { status } = req.body;
+
+  const result = await usersCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+
+  res.send(result);
 });
 
 /* ======================
    ISSUES API
 ====================== */
+
+// Create issue (Citizen)
+app.post("/issues", async (req, res) => {
+  const issue = {
+    ...req.body,
+    status: "pending",
+    priority: req.body.priority || "normal",
+    upvotes: 0,
+    upvotedBy: [],
+    createdAt: new Date(),
+  };
+
+  const result = await issuesCollection.insertOne(issue);
+  res.send(result);
+});
 
 // Get all issues
 app.get("/issues", async (req, res) => {
@@ -119,34 +148,7 @@ app.get("/issues/:id", async (req, res) => {
   res.send(issue);
 });
 
-// Create issue
-app.post("/issues", async (req, res) => {
-  const issue = {
-    ...req.body,
-    status: "pending",
-    priority: req.body.priority || "normal",
-    upvotes: 0,
-    upvotedBy: [],
-    createdAt: new Date(),
-  };
-
-  const result = await issuesCollection.insertOne(issue);
-  res.send(result);
-});
-
-// Update issue status (Staff/Admin)
-app.patch("/issues/status/:id", async (req, res) => {
-  const { status } = req.body;
-
-  const result = await issuesCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: { status } }
-  );
-
-  res.send(result);
-});
-
-// Assign staff (ADMIN)
+// Assign staff to issue (ADMIN)
 app.patch("/issues/assign/:id", async (req, res) => {
   const issueId = req.params.id;
   const staff = req.body; // { name, email }
@@ -179,7 +181,19 @@ app.get("/issues/staff/:email", async (req, res) => {
   res.send(issues);
 });
 
-// Delete issue
+// Update issue status (Staff/Admin)
+app.patch("/issues/status/:id", async (req, res) => {
+  const { status } = req.body;
+
+  const result = await issuesCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+
+  res.send(result);
+});
+
+// Delete issue (Admin)
 app.delete("/issues/:id", async (req, res) => {
   const result = await issuesCollection.deleteOne({
     _id: new ObjectId(req.params.id),
