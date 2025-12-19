@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
+import jwt from "jsonwebtoken";
 import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
 
 dotenv.config();
@@ -8,16 +9,13 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-/* ======================
-   MIDDLEWARE
-====================== */
 app.use(cors());
 app.use(express.json());
 
 /* ======================
-   MONGODB CONNECTION
+   MONGODB
 ====================== */
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wemtzez.mongodb.net/${process.env.DB_NAME}?retryWrites=true&w=majority&appName=Cluster0`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wemtzez.mongodb.net/${process.env.DB_NAME}?retryWrites=true&w=majority`;
 
 const client = new MongoClient(uri, {
   serverApi: {
@@ -27,214 +25,145 @@ const client = new MongoClient(uri, {
   },
 });
 
-let usersCollection;
-let issuesCollection;
+let usersCollection, issuesCollection;
 
 async function connectDB() {
-  try {
-    await client.connect();
-    const db = client.db(process.env.DB_NAME);
-
-    usersCollection = db.collection("users");
-    issuesCollection = db.collection("issues");
-
-    console.log("✅ MongoDB connected successfully");
-  } catch (error) {
-    console.error("❌ MongoDB connection failed:", error.message);
-  }
+  await client.connect();
+  const db = client.db(process.env.DB_NAME);
+  usersCollection = db.collection("users");
+  issuesCollection = db.collection("issues");
+  console.log("✅ MongoDB Connected");
 }
 connectDB();
 
 /* ======================
-   ROOT
+   JWT MIDDLEWARE
 ====================== */
-app.get("/", (req, res) => {
-  res.send("🚀 CityFix API is running");
+const verifyToken = (req, res, next) => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader) {
+    return res.status(401).send({ message: "Unauthorized" });
+  }
+
+  const token = authHeader.split(" ")[1];
+
+  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
+    if (err) {
+      return res.status(401).send({ message: "Invalid token" });
+    }
+    req.decoded = decoded;
+    next();
+  });
+};
+
+const verifyAdmin = async (req, res, next) => {
+  const email = req.decoded.email;
+  const user = await usersCollection.findOne({ email });
+
+  if (user?.role !== "admin") {
+    return res.status(403).send({ message: "Forbidden" });
+  }
+  next();
+};
+
+const verifyStaff = async (req, res, next) => {
+  const email = req.decoded.email;
+  const user = await usersCollection.findOne({ email });
+
+  if (user?.role !== "staff") {
+    return res.status(403).send({ message: "Forbidden" });
+  }
+  next();
+};
+
+/* ======================
+   JWT ISSUE
+====================== */
+app.post("/jwt", async (req, res) => {
+  const user = req.body; // { email }
+  const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
+    expiresIn: "7d",
+  });
+  res.send({ token });
 });
 
 /* ======================
-   USERS API
+   USERS
 ====================== */
-
-// Save user (Register / Google Login)
 app.post("/users", async (req, res) => {
-  try {
-    const user = req.body;
+  const user = req.body;
 
-    const existingUser = await usersCollection.findOne({
-      email: user.email,
-    });
+  const exists = await usersCollection.findOne({ email: user.email });
+  if (exists) return res.send({ message: "User exists" });
 
-    if (existingUser) {
-      return res.send(existingUser);
-    }
+  const role =
+    user.email === process.env.ADMIN_EMAIL
+      ? "admin"
+      : user.role || "citizen";
 
-    const role =
-      user.email === process.env.ADMIN_EMAIL
-        ? "admin"
-        : user.role || "citizen";
+  const result = await usersCollection.insertOne({
+    ...user,
+    role,
+    createdAt: new Date(),
+  });
 
-    const newUser = {
-      ...user,
-      role,
-      createdAt: new Date(),
-    };
-
-    const result = await usersCollection.insertOne(newUser);
-    res.send(result);
-  } catch {
-    res.status(500).send({ message: "Failed to save user" });
-  }
+  res.send(result);
 });
 
-// Get user by email (role check)
 app.get("/users/:email", async (req, res) => {
-  const user = await usersCollection.findOne({
-    email: req.params.email,
-  });
+  const user = await usersCollection.findOne({ email: req.params.email });
   res.send(user);
 });
 
-// Get all staff (ADMIN)
-app.get("/staff", async (req, res) => {
-  const staffs = await usersCollection
-    .find({ role: "staff" })
-    .toArray();
-  res.send(staffs);
+/* ======================
+   ADMIN PROTECTED
+====================== */
+app.get("/admin/stats", verifyToken, verifyAdmin, async (req, res) => {
+  const users = await usersCollection.countDocuments();
+  const issues = await issuesCollection.countDocuments();
+  res.send({ users, issues });
 });
 
-// Update staff status (ADMIN)
-app.patch("/staff/status/:id", async (req, res) => {
-  const { status } = req.body;
+// ======================
+// ADMIN STATS
+// ======================
+app.get("/admin/stats", async (req, res) => {
+  try {
+    const totalIssues = await issuesCollection.countDocuments();
+    const pendingIssues = await issuesCollection.countDocuments({ status: "pending" });
+    const inProgressIssues = await issuesCollection.countDocuments({ status: "in-progress" });
+    const resolvedIssues = await issuesCollection.countDocuments({ status: "resolved" });
 
-  const result = await usersCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: { status } }
-  );
+    const totalUsers = await usersCollection.countDocuments({ role: "citizen" });
+    const totalStaff = await usersCollection.countDocuments({ role: "staff" });
 
-  res.send(result);
+    res.send({
+      totalIssues,
+      pendingIssues,
+      inProgressIssues,
+      resolvedIssues,
+      totalUsers,
+      totalStaff,
+    });
+  } catch (error) {
+    res.status(500).send({ message: "Failed to load admin stats" });
+  }
 });
 
 /* ======================
-   ISSUES API
+   STAFF PROTECTED
 ====================== */
-
-// Create issue (Citizen)
-app.post("/issues", async (req, res) => {
-  const issue = {
-    ...req.body,
-    status: "pending",
-    priority: req.body.priority || "normal",
-    upvotes: 0,
-    upvotedBy: [],
-    createdAt: new Date(),
-  };
-
-  const result = await issuesCollection.insertOne(issue);
-  res.send(result);
-});
-
-// Get all issues
-app.get("/issues", async (req, res) => {
-  const issues = await issuesCollection.find().toArray();
-  res.send(issues);
-});
-
-// Get single issue
-app.get("/issues/:id", async (req, res) => {
-  const issue = await issuesCollection.findOne({
-    _id: new ObjectId(req.params.id),
-  });
-  res.send(issue);
-});
-
-// Assign staff to issue (ADMIN)
-app.patch("/issues/assign/:id", async (req, res) => {
-  const issueId = req.params.id;
-  const staff = req.body; // { name, email }
-
-  if (!staff?.email) {
-    return res.status(400).send({ message: "Staff info required" });
-  }
-
-  const result = await issuesCollection.updateOne(
-    { _id: new ObjectId(issueId) },
-    {
-      $set: {
-        assignedStaff: staff,
-        status: "in-progress",
-      },
-    }
-  );
-
-  res.send({ success: true, result });
-});
-
-// Get issues assigned to staff
-app.get("/issues/staff/:email", async (req, res) => {
-  const email = req.params.email;
-
+app.get("/staff/issues", verifyToken, verifyStaff, async (req, res) => {
+  const email = req.decoded.email;
   const issues = await issuesCollection
     .find({ "assignedStaff.email": email })
     .toArray();
-
   res.send(issues);
 });
 
-// Update issue status (Staff/Admin)
-app.patch("/issues/status/:id", async (req, res) => {
-  const { status } = req.body;
-
-  const result = await issuesCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    { $set: { status } }
-  );
-
-  res.send(result);
-});
-
-// Delete issue (Admin)
-app.delete("/issues/:id", async (req, res) => {
-  const result = await issuesCollection.deleteOne({
-    _id: new ObjectId(req.params.id),
-  });
-  res.send(result);
-});
-
-// Upvote issue
-app.patch("/issues/upvote/:id", async (req, res) => {
-  const { userId } = req.body;
-
-  const issue = await issuesCollection.findOne({
-    _id: new ObjectId(req.params.id),
-  });
-
-  if (!issue) {
-    return res.status(404).send({ message: "Issue not found" });
-  }
-
-  if (issue.authorId === userId) {
-    return res.status(403).send({ message: "Cannot upvote own issue" });
-  }
-
-  if (issue.upvotedBy.includes(userId)) {
-    return res.status(409).send({ message: "Already upvoted" });
-  }
-
-  await issuesCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    {
-      $inc: { upvotes: 1 },
-      $push: { upvotedBy: userId },
-    }
-  );
-
-  res.send({ success: true });
-});
-
 /* ======================
-   SERVER START
+   SERVER
 ====================== */
 app.listen(port, () => {
-  console.log(`🔥 CityFix server running on port ${port}`);
+  console.log(`🔥 CityFix API running on ${port}`);
 });
