@@ -9,11 +9,14 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
+/* ======================
+   MIDDLEWARE
+====================== */
 app.use(cors());
 app.use(express.json());
 
 /* ======================
-   MONGODB
+   MONGODB CONNECTION
 ====================== */
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wemtzez.mongodb.net/${process.env.DB_NAME}?retryWrites=true&w=majority`;
 
@@ -25,108 +28,133 @@ const client = new MongoClient(uri, {
   },
 });
 
-let usersCollection, issuesCollection;
+let usersCollection;
+let issuesCollection;
 
 async function connectDB() {
-  await client.connect();
-  const db = client.db(process.env.DB_NAME);
-  usersCollection = db.collection("users");
-  issuesCollection = db.collection("issues");
-  console.log("✅ MongoDB Connected");
+  try {
+    await client.connect();
+    const db = client.db(process.env.DB_NAME);
+    usersCollection = db.collection("users");
+    issuesCollection = db.collection("issues");
+    console.log("✅ MongoDB Connected");
+  } catch (error) {
+    console.error("❌ MongoDB connection failed:", error.message);
+  }
 }
 connectDB();
 
 /* ======================
-   JWT MIDDLEWARE
+   ROOT
 ====================== */
-const verifyToken = (req, res, next) => {
-  const authHeader = req.headers.authorization;
-  if (!authHeader) {
-    return res.status(401).send({ message: "Unauthorized" });
-  }
-
-  const token = authHeader.split(" ")[1];
-
-  jwt.verify(token, process.env.ACCESS_TOKEN_SECRET, (err, decoded) => {
-    if (err) {
-      return res.status(401).send({ message: "Invalid token" });
-    }
-    req.decoded = decoded;
-    next();
-  });
-};
-
-const verifyAdmin = async (req, res, next) => {
-  const email = req.decoded.email;
-  const user = await usersCollection.findOne({ email });
-
-  if (user?.role !== "admin") {
-    return res.status(403).send({ message: "Forbidden" });
-  }
-  next();
-};
-
-const verifyStaff = async (req, res, next) => {
-  const email = req.decoded.email;
-  const user = await usersCollection.findOne({ email });
-
-  if (user?.role !== "staff") {
-    return res.status(403).send({ message: "Forbidden" });
-  }
-  next();
-};
-
-/* ======================
-   JWT ISSUE
-====================== */
-app.post("/jwt", async (req, res) => {
-  const user = req.body; // { email }
-  const token = jwt.sign(user, process.env.ACCESS_TOKEN_SECRET, {
-    expiresIn: "7d",
-  });
-  res.send({ token });
+app.get("/", (req, res) => {
+  res.send("🚀 CityFix API is running");
 });
 
 /* ======================
    USERS
 ====================== */
+
+// Save user (Register / Google login)
 app.post("/users", async (req, res) => {
-  const user = req.body;
+  try {
+    const user = req.body;
 
-  const exists = await usersCollection.findOne({ email: user.email });
-  if (exists) return res.send({ message: "User exists" });
+    const exists = await usersCollection.findOne({ email: user.email });
+    if (exists) return res.send({ message: "User already exists" });
 
-  const role =
-    user.email === process.env.ADMIN_EMAIL
-      ? "admin"
-      : user.role || "citizen";
+    const role =
+      user.email === process.env.ADMIN_EMAIL ? "admin" : "citizen";
 
-  const result = await usersCollection.insertOne({
-    ...user,
-    role,
-    createdAt: new Date(),
-  });
+    const result = await usersCollection.insertOne({
+      ...user,
+      role,
+      createdAt: new Date(),
+    });
 
-  res.send(result);
+    res.send(result);
+  } catch {
+    res.status(500).send({ message: "Failed to save user" });
+  }
 });
 
+// Get user by email (useRole hook)
 app.get("/users/:email", async (req, res) => {
-  const user = await usersCollection.findOne({ email: req.params.email });
+  const user = await usersCollection.findOne({
+    email: req.params.email,
+  });
   res.send(user);
 });
 
 /* ======================
-   ADMIN PROTECTED
+   ISSUES
 ====================== */
-app.get("/admin/stats", verifyToken, verifyAdmin, async (req, res) => {
-  const users = await usersCollection.countDocuments();
-  const issues = await issuesCollection.countDocuments();
-  res.send({ users, issues });
+
+// Get all issues
+app.get("/issues", async (req, res) => {
+  const issues = await issuesCollection.find().toArray();
+  res.send(issues);
 });
 
-// ======================
-// ADMIN STATS
-// ======================
+// Create issue
+app.post("/issues", async (req, res) => {
+  const issue = {
+    ...req.body,
+    status: "pending",
+    priority: req.body.priority || "normal",
+    createdAt: new Date(),
+  };
+
+  const result = await issuesCollection.insertOne(issue);
+  res.send(result);
+});
+
+// Assign staff (ADMIN)
+app.patch("/issues/assign/:id", async (req, res) => {
+  const issueId = req.params.id;
+  const staff = req.body; // { name, email }
+
+  if (!staff?.email) {
+    return res.status(400).send({ message: "Staff info required" });
+  }
+
+  const result = await issuesCollection.updateOne(
+    { _id: new ObjectId(issueId) },
+    {
+      $set: {
+        assignedStaff: staff,
+        status: "in-progress",
+      },
+    }
+  );
+
+  res.send({ success: true, result });
+});
+
+// Update issue status
+app.patch("/issues/status/:id", async (req, res) => {
+  const { status } = req.body;
+
+  const result = await issuesCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+
+  res.send(result);
+});
+
+// Staff assigned issues
+app.get("/issues/staff/:email", async (req, res) => {
+  const issues = await issuesCollection
+    .find({ "assignedStaff.email": req.params.email })
+    .toArray();
+
+  res.send(issues);
+});
+
+/* ======================
+   ADMIN DASHBOARD STATS
+====================== */
 app.get("/admin/stats", async (req, res) => {
   try {
     const totalIssues = await issuesCollection.countDocuments();
@@ -145,25 +173,14 @@ app.get("/admin/stats", async (req, res) => {
       totalUsers,
       totalStaff,
     });
-  } catch (error) {
+  } catch {
     res.status(500).send({ message: "Failed to load admin stats" });
   }
-});
-
-/* ======================
-   STAFF PROTECTED
-====================== */
-app.get("/staff/issues", verifyToken, verifyStaff, async (req, res) => {
-  const email = req.decoded.email;
-  const issues = await issuesCollection
-    .find({ "assignedStaff.email": email })
-    .toArray();
-  res.send(issues);
 });
 
 /* ======================
    SERVER
 ====================== */
 app.listen(port, () => {
-  console.log(`🔥 CityFix API running on ${port}`);
+  console.log(`🔥 CityFix server running on port ${port}`);
 });
