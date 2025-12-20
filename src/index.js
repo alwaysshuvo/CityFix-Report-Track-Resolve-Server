@@ -87,6 +87,49 @@ app.get("/users/:email", async (req, res) => {
 });
 
 /* ======================
+   ADMIN: MANAGE USERS
+====================== */
+
+// Get all users (Admin)
+app.get("/admin/users", async (req, res) => {
+  try {
+    const users = await usersCollection.find().toArray();
+    res.send(users);
+  } catch {
+    res.status(500).send({ message: "Failed to fetch users" });
+  }
+});
+
+// Update user role (Admin)
+app.patch("/admin/users/role/:id", async (req, res) => {
+  const { role } = req.body;
+
+  if (!["citizen", "staff", "admin"].includes(role)) {
+    return res.status(400).send({ message: "Invalid role" });
+  }
+
+  const result = await usersCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { role } }
+  );
+
+  res.send(result);
+});
+
+// Block / Unblock user (Admin)
+app.patch("/admin/users/status/:id", async (req, res) => {
+  const { status } = req.body; // active | blocked
+
+  const result = await usersCollection.updateOne(
+    { _id: new ObjectId(req.params.id) },
+    { $set: { status } }
+  );
+
+  res.send(result);
+});
+
+
+/* ======================
    ISSUES
 ====================== */
 
