@@ -52,16 +52,31 @@ app.get("/", (req, res) => {
 });
 
 /* ======================
+   JWT (OPTIONAL / FUTURE)
+====================== */
+app.post("/jwt", (req, res) => {
+  const user = req.body; // { email }
+  const token = jwt.sign(
+    user,
+    process.env.ACCESS_TOKEN_SECRET || "cityfix-secret",
+    { expiresIn: "7d" }
+  );
+  res.send({ token });
+});
+
+/* ======================
    USERS
 ====================== */
 
-// Save user (Register / Google login)
+// Save user (Register / Google Login)
 app.post("/users", async (req, res) => {
   try {
     const user = req.body;
 
     const exists = await usersCollection.findOne({ email: user.email });
-    if (exists) return res.send({ message: "User already exists" });
+    if (exists) {
+      return res.send({ message: "User already exists" });
+    }
 
     const role =
       user.email === process.env.ADMIN_EMAIL ? "admin" : "citizen";
@@ -69,6 +84,7 @@ app.post("/users", async (req, res) => {
     const result = await usersCollection.insertOne({
       ...user,
       role,
+      status: "active",
       createdAt: new Date(),
     });
 
@@ -78,7 +94,7 @@ app.post("/users", async (req, res) => {
   }
 });
 
-// Get user by email (useRole hook)
+// Get user by email (🔥 useRole hook depends on this)
 app.get("/users/:email", async (req, res) => {
   const user = await usersCollection.findOne({
     email: req.params.email,
@@ -90,7 +106,7 @@ app.get("/users/:email", async (req, res) => {
    ADMIN: MANAGE USERS
 ====================== */
 
-// Get all users (Admin)
+// Get all users
 app.get("/admin/users", async (req, res) => {
   try {
     const users = await usersCollection.find().toArray();
@@ -100,7 +116,7 @@ app.get("/admin/users", async (req, res) => {
   }
 });
 
-// Update user role (Admin)
+// Update user role
 app.patch("/admin/users/role/:id", async (req, res) => {
   const { role } = req.body;
 
@@ -116,7 +132,7 @@ app.patch("/admin/users/role/:id", async (req, res) => {
   res.send(result);
 });
 
-// Block / Unblock user (Admin)
+// Block / Unblock user
 app.patch("/admin/users/status/:id", async (req, res) => {
   const { status } = req.body; // active | blocked
 
@@ -128,21 +144,21 @@ app.patch("/admin/users/status/:id", async (req, res) => {
   res.send(result);
 });
 
-
 /* ======================
    ISSUES
 ====================== */
 
-// Get all issues
+// Get all issues (Admin / Public)
 app.get("/issues", async (req, res) => {
   const issues = await issuesCollection.find().toArray();
   res.send(issues);
 });
 
-// Create issue
+// Create issue (Citizen)
 app.post("/issues", async (req, res) => {
   const issue = {
     ...req.body,
+    authorEmail: req.body.authorEmail,
     status: "pending",
     priority: req.body.priority || "normal",
     createdAt: new Date(),
@@ -152,9 +168,25 @@ app.post("/issues", async (req, res) => {
   res.send(result);
 });
 
-// Assign staff (ADMIN)
+// Get issues by citizen
+app.get("/issues/user/:email", async (req, res) => {
+  const issues = await issuesCollection
+    .find({ authorEmail: req.params.email })
+    .toArray();
+
+  res.send(issues);
+});
+
+// Delete issue (Citizen)
+app.delete("/issues/:id", async (req, res) => {
+  const result = await issuesCollection.deleteOne({
+    _id: new ObjectId(req.params.id),
+  });
+  res.send(result);
+});
+
+// Assign staff (Admin)
 app.patch("/issues/assign/:id", async (req, res) => {
-  const issueId = req.params.id;
   const staff = req.body; // { name, email }
 
   if (!staff?.email) {
@@ -162,7 +194,7 @@ app.patch("/issues/assign/:id", async (req, res) => {
   }
 
   const result = await issuesCollection.updateOne(
-    { _id: new ObjectId(issueId) },
+    { _id: new ObjectId(req.params.id) },
     {
       $set: {
         assignedStaff: staff,
@@ -171,7 +203,7 @@ app.patch("/issues/assign/:id", async (req, res) => {
     }
   );
 
-  res.send({ success: true, result });
+  res.send(result);
 });
 
 // Update issue status
@@ -201,12 +233,22 @@ app.get("/issues/staff/:email", async (req, res) => {
 app.get("/admin/stats", async (req, res) => {
   try {
     const totalIssues = await issuesCollection.countDocuments();
-    const pendingIssues = await issuesCollection.countDocuments({ status: "pending" });
-    const inProgressIssues = await issuesCollection.countDocuments({ status: "in-progress" });
-    const resolvedIssues = await issuesCollection.countDocuments({ status: "resolved" });
+    const pendingIssues = await issuesCollection.countDocuments({
+      status: "pending",
+    });
+    const inProgressIssues = await issuesCollection.countDocuments({
+      status: "in-progress",
+    });
+    const resolvedIssues = await issuesCollection.countDocuments({
+      status: "resolved",
+    });
 
-    const totalUsers = await usersCollection.countDocuments({ role: "citizen" });
-    const totalStaff = await usersCollection.countDocuments({ role: "staff" });
+    const totalUsers = await usersCollection.countDocuments({
+      role: "citizen",
+    });
+    const totalStaff = await usersCollection.countDocuments({
+      role: "staff",
+    });
 
     res.send({
       totalIssues,
@@ -222,7 +264,7 @@ app.get("/admin/stats", async (req, res) => {
 });
 
 /* ======================
-   SERVER
+   SERVER START
 ====================== */
 app.listen(port, () => {
   console.log(`🔥 CityFix server running on port ${port}`);
