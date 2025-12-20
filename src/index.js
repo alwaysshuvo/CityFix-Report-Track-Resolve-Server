@@ -1,7 +1,6 @@
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
-import jwt from "jsonwebtoken";
 import { MongoClient, ServerApiVersion, ObjectId } from "mongodb";
 
 dotenv.config();
@@ -16,7 +15,7 @@ app.use(cors());
 app.use(express.json());
 
 /* ======================
-   MONGODB CONNECTION
+   DATABASE
 ====================== */
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wemtzez.mongodb.net/${process.env.DB_NAME}?retryWrites=true&w=majority`;
 
@@ -37,9 +36,9 @@ async function connectDB() {
     const db = client.db(process.env.DB_NAME);
     usersCollection = db.collection("users");
     issuesCollection = db.collection("issues");
-    console.log("✅ MongoDB Connected");
+    console.log("MongoDB connected");
   } catch (error) {
-    console.error("❌ MongoDB connection failed:", error.message);
+    console.error("MongoDB error:", error.message);
   }
 }
 connectDB();
@@ -48,35 +47,18 @@ connectDB();
    ROOT
 ====================== */
 app.get("/", (req, res) => {
-  res.send("🚀 CityFix API is running");
-});
-
-/* ======================
-   JWT (OPTIONAL / FUTURE)
-====================== */
-app.post("/jwt", (req, res) => {
-  const user = req.body; // { email }
-  const token = jwt.sign(
-    user,
-    process.env.ACCESS_TOKEN_SECRET || "cityfix-secret",
-    { expiresIn: "7d" }
-  );
-  res.send({ token });
+  res.send("CityFix API running");
 });
 
 /* ======================
    USERS
 ====================== */
-
-// Save user (Register / Google Login)
 app.post("/users", async (req, res) => {
   try {
     const user = req.body;
 
     const exists = await usersCollection.findOne({ email: user.email });
-    if (exists) {
-      return res.send({ message: "User already exists" });
-    }
+    if (exists) return res.send({ message: "User already exists" });
 
     const role =
       user.email === process.env.ADMIN_EMAIL ? "admin" : "citizen";
@@ -90,11 +72,10 @@ app.post("/users", async (req, res) => {
 
     res.send(result);
   } catch {
-    res.status(500).send({ message: "Failed to save user" });
+    res.status(500).send({ message: "User creation failed" });
   }
 });
 
-// Get user by email (🔥 useRole hook depends on this)
 app.get("/users/:email", async (req, res) => {
   const user = await usersCollection.findOne({
     email: req.params.email,
@@ -103,20 +84,17 @@ app.get("/users/:email", async (req, res) => {
 });
 
 /* ======================
-   ADMIN: MANAGE USERS
+   ADMIN USERS
 ====================== */
-
-// Get all users
 app.get("/admin/users", async (req, res) => {
   try {
     const users = await usersCollection.find().toArray();
     res.send(users);
   } catch {
-    res.status(500).send({ message: "Failed to fetch users" });
+    res.status(500).send({ message: "Failed to load users" });
   }
 });
 
-// Update user role
 app.patch("/admin/users/role/:id", async (req, res) => {
   const { role } = req.body;
 
@@ -132,9 +110,8 @@ app.patch("/admin/users/role/:id", async (req, res) => {
   res.send(result);
 });
 
-// Block / Unblock user
 app.patch("/admin/users/status/:id", async (req, res) => {
-  const { status } = req.body; // active | blocked
+  const { status } = req.body;
 
   const result = await usersCollection.updateOne(
     { _id: new ObjectId(req.params.id) },
@@ -147,18 +124,14 @@ app.patch("/admin/users/status/:id", async (req, res) => {
 /* ======================
    ISSUES
 ====================== */
-
-// Get all issues (Admin / Public)
 app.get("/issues", async (req, res) => {
   const issues = await issuesCollection.find().toArray();
   res.send(issues);
 });
 
-// Create issue (Citizen)
 app.post("/issues", async (req, res) => {
   const issue = {
     ...req.body,
-    authorEmail: req.body.authorEmail,
     status: "pending",
     priority: req.body.priority || "normal",
     createdAt: new Date(),
@@ -168,26 +141,8 @@ app.post("/issues", async (req, res) => {
   res.send(result);
 });
 
-// Get issues by citizen
-app.get("/issues/user/:email", async (req, res) => {
-  const issues = await issuesCollection
-    .find({ authorEmail: req.params.email })
-    .toArray();
-
-  res.send(issues);
-});
-
-// Delete issue (Citizen)
-app.delete("/issues/:id", async (req, res) => {
-  const result = await issuesCollection.deleteOne({
-    _id: new ObjectId(req.params.id),
-  });
-  res.send(result);
-});
-
-// Assign staff (Admin)
 app.patch("/issues/assign/:id", async (req, res) => {
-  const staff = req.body; // { name, email }
+  const staff = req.body;
 
   if (!staff?.email) {
     return res.status(400).send({ message: "Staff info required" });
@@ -206,7 +161,6 @@ app.patch("/issues/assign/:id", async (req, res) => {
   res.send(result);
 });
 
-// Update issue status
 app.patch("/issues/status/:id", async (req, res) => {
   const { status } = req.body;
 
@@ -218,7 +172,6 @@ app.patch("/issues/status/:id", async (req, res) => {
   res.send(result);
 });
 
-// Staff assigned issues
 app.get("/issues/staff/:email", async (req, res) => {
   const issues = await issuesCollection
     .find({ "assignedStaff.email": req.params.email })
@@ -228,27 +181,17 @@ app.get("/issues/staff/:email", async (req, res) => {
 });
 
 /* ======================
-   ADMIN DASHBOARD STATS
+   ADMIN STATS
 ====================== */
 app.get("/admin/stats", async (req, res) => {
   try {
     const totalIssues = await issuesCollection.countDocuments();
-    const pendingIssues = await issuesCollection.countDocuments({
-      status: "pending",
-    });
-    const inProgressIssues = await issuesCollection.countDocuments({
-      status: "in-progress",
-    });
-    const resolvedIssues = await issuesCollection.countDocuments({
-      status: "resolved",
-    });
+    const pendingIssues = await issuesCollection.countDocuments({ status: "pending" });
+    const inProgressIssues = await issuesCollection.countDocuments({ status: "in-progress" });
+    const resolvedIssues = await issuesCollection.countDocuments({ status: "resolved" });
 
-    const totalUsers = await usersCollection.countDocuments({
-      role: "citizen",
-    });
-    const totalStaff = await usersCollection.countDocuments({
-      role: "staff",
-    });
+    const totalUsers = await usersCollection.countDocuments({ role: "citizen" });
+    const totalStaff = await usersCollection.countDocuments({ role: "staff" });
 
     res.send({
       totalIssues,
@@ -259,13 +202,13 @@ app.get("/admin/stats", async (req, res) => {
       totalStaff,
     });
   } catch {
-    res.status(500).send({ message: "Failed to load admin stats" });
+    res.status(500).send({ message: "Stats load failed" });
   }
 });
 
 /* ======================
-   SERVER START
+   SERVER
 ====================== */
 app.listen(port, () => {
-  console.log(`🔥 CityFix server running on port ${port}`);
+  console.log(`Server running on port ${port}`);
 });
