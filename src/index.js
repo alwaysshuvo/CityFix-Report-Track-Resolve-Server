@@ -57,6 +57,10 @@ app.post("/users", async (req, res) => {
   try {
     const user = req.body;
 
+    if (!user.email) {
+      return res.status(400).send({ message: "Email required" });
+    }
+
     const exists = await usersCollection.findOne({ email: user.email });
     if (exists) return res.send({ message: "User already exists" });
 
@@ -88,7 +92,7 @@ app.get("/users/:email", async (req, res) => {
 ====================== */
 app.get("/admin/users", async (req, res) => {
   try {
-    const users = await usersCollection.find().toArray();
+    const users = await usersCollection.find().sort({ createdAt: -1 }).toArray();
     res.send(users);
   } catch {
     res.status(500).send({ message: "Failed to load users" });
@@ -122,18 +126,82 @@ app.patch("/admin/users/status/:id", async (req, res) => {
 });
 
 /* ======================
-   ISSUES
+   STAFF LIST
 ====================== */
-app.get("/issues", async (req, res) => {
-  const issues = await issuesCollection.find().toArray();
-  res.send(issues);
+app.get("/staff", async (req, res) => {
+  try {
+    const staffs = await usersCollection
+      .find({ role: "staff" })
+      .sort({ createdAt: -1 })
+      .toArray();
+    res.send(staffs);
+  } catch {
+    res.status(500).send({ message: "Failed to load staff" });
+  }
 });
 
+/* ======================
+   ISSUES
+====================== */
+
+// All Issues
+app.get("/issues", async (req, res) => {
+  try {
+    const issues = await issuesCollection.find().sort({ createdAt: -1 }).toArray();
+    res.send(issues);
+  } catch {
+    res.status(500).send({ message: "Failed to load issues" });
+  }
+});
+
+// Issues for specific user
+app.get("/issues/user/:email", async (req, res) => {
+  try {
+    const issues = await issuesCollection
+      .find({ reporterEmail: req.params.email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.send(issues);
+  } catch {
+    res.status(500).send({ message: "Failed to load user issues" });
+  }
+});
+
+// Get single issue
+app.get("/issues/:id", async (req, res) => {
+  try {
+    const id = req.params.id;
+    const issue = await issuesCollection.findOne({ _id: new ObjectId(id) });
+
+    if (!issue) {
+      return res.status(404).send({ message: "Issue not found" });
+    }
+
+    res.send(issue);
+  } catch {
+    res.status(500).send({ message: "Failed to load issue" });
+  }
+});
+
+// Create Issue
 app.post("/issues", async (req, res) => {
+  const data = req.body;
+
+  if (!data.title || !data.reporterEmail) {
+    return res.status(400).send({ message: "title & reporterEmail required" });
+  }
+
   const issue = {
-    ...req.body,
+    title: data.title,
+    description: data.description || "",
+    reporterEmail: data.reporterEmail,
+    category: data.category || "",
+    location: data.location || "",
+    image: data.image || "",
+    priority: data.priority || "normal",
     status: "pending",
-    priority: req.body.priority || "normal",
+    assignedStaff: null,
     createdAt: new Date(),
   };
 
@@ -141,9 +209,9 @@ app.post("/issues", async (req, res) => {
   res.send(result);
 });
 
+// Assign Staff
 app.patch("/issues/assign/:id", async (req, res) => {
-  const staff = req.body;
-
+  const staff = req.body; // {name, email}
   if (!staff?.email) {
     return res.status(400).send({ message: "Staff info required" });
   }
@@ -161,6 +229,7 @@ app.patch("/issues/assign/:id", async (req, res) => {
   res.send(result);
 });
 
+// Update Status
 app.patch("/issues/status/:id", async (req, res) => {
   const { status } = req.body;
 
@@ -172,12 +241,18 @@ app.patch("/issues/status/:id", async (req, res) => {
   res.send(result);
 });
 
+// Staff assigned issues
 app.get("/issues/staff/:email", async (req, res) => {
-  const issues = await issuesCollection
-    .find({ "assignedStaff.email": req.params.email })
-    .toArray();
+  try {
+    const issues = await issuesCollection
+      .find({ "assignedStaff.email": req.params.email })
+      .sort({ createdAt: -1 })
+      .toArray();
 
-  res.send(issues);
+    res.send(issues);
+  } catch {
+    res.status(500).send({ message: "Failed to load assigned issues" });
+  }
 });
 
 /* ======================
