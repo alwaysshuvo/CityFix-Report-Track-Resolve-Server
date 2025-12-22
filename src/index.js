@@ -109,7 +109,8 @@ app.post("/create-checkout-session", async (req, res) => {
   try {
     const { email } = req.body;
     const user = await usersCollection.findOne({ email });
-    if (user?.premium) return res.status(400).json({ error: "Already premium" });
+    if (user?.premium)
+      return res.status(400).json({ error: "Already premium" });
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -229,7 +230,9 @@ app.get("/admin/payments/summary", async (_, res) => {
       ])
       .toArray();
 
-    const premiumUsers = await usersCollection.countDocuments({ premium: true });
+    const premiumUsers = await usersCollection.countDocuments({
+      premium: true,
+    });
 
     res.json({
       totalRevenue: revenue[0]?.total || 0,
@@ -245,7 +248,10 @@ app.get("/admin/payments/summary", async (_, res) => {
  ========================= */
 app.get("/admin/users", async (_, res) => {
   try {
-    const users = await usersCollection.find({}).sort({ createdAt: -1 }).toArray();
+    const users = await usersCollection
+      .find({})
+      .sort({ createdAt: -1 })
+      .toArray();
     res.json(users);
   } catch {
     res.status(500).json({ error: "Failed to fetch users" });
@@ -273,7 +279,9 @@ app.get("/admin/stats", async (_, res) => {
     const totalStaff = await usersCollection.countDocuments({ role: "staff" });
 
     const totalIssues = await issuesCollection.countDocuments();
-    const pendingIssues = await issuesCollection.countDocuments({ status: "pending" });
+    const pendingIssues = await issuesCollection.countDocuments({
+      status: "pending",
+    });
     const inProgressIssues = await issuesCollection.countDocuments({
       status: { $in: ["in progress", "in-progress"] },
     });
@@ -319,7 +327,9 @@ app.post("/issues", async (req, res) => {
   try {
     const d = req.body;
     if (await checkFreeLimit(d.reporterEmail))
-      return res.status(400).json({ error: "Free user limit reached (max 3 issues)" });
+      return res
+        .status(400)
+        .json({ error: "Free user limit reached (max 3 issues)" });
 
     const reporter = await usersCollection.findOne({ email: d.reporterEmail });
 
@@ -358,11 +368,28 @@ app.post("/issues", async (req, res) => {
  ========================= */
 app.get("/issues/user/:email", async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 5; // default 5 per page
+    const skip = (page - 1) * limit;
+
+    const filter = { reporterEmail: req.params.email };
+
+    const total = await issuesCollection.countDocuments(filter);
+
     const list = await issuesCollection
-      .find({ reporterEmail: req.params.email })
+      .find(filter)
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .toArray();
-    res.json(list);
+
+    res.json({
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      issues: list,
+    });
   } catch {
     res.status(500).json({ error: "Fetch failed" });
   }
@@ -411,7 +438,9 @@ app.get("/issues", async (req, res) => {
  ========================= */
 app.get("/issues/:id", async (req, res) => {
   try {
-    const doc = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
+    const doc = await issuesCollection.findOne({
+      _id: new ObjectId(req.params.id),
+    });
     if (!doc) return res.status(404).json({ message: "Not found" });
     res.json(doc);
   } catch {
@@ -425,7 +454,9 @@ app.get("/issues/:id", async (req, res) => {
 app.put("/issues/:id", async (req, res) => {
   try {
     const updateData = req.body;
-    const issue = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
+    const issue = await issuesCollection.findOne({
+      _id: new ObjectId(req.params.id),
+    });
 
     if (!issue) return res.status(404).json({ message: "Issue not found" });
     if (issue.status !== "pending")
@@ -463,13 +494,17 @@ app.put("/issues/:id", async (req, res) => {
  ========================= */
 app.delete("/issues/:id", async (req, res) => {
   try {
-    const issue = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
+    const issue = await issuesCollection.findOne({
+      _id: new ObjectId(req.params.id),
+    });
 
     if (!issue) return res.status(404).json({ message: "Not found" });
     if (issue.status !== "pending")
-      return res.status(400).json({ message: "Cannot delete non-pending issue" });
+      return res
+        .status(400)
+        .json({ message: "Cannot delete non-pending issue" });
 
-    await issuesCollection.deleteOne({ _id: new Object.params.id });
+    await issuesCollection.deleteOne({ _id: new Object.params.id() });
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "Delete failed" });
@@ -487,7 +522,9 @@ app.patch("/issues/upvote/:id", async (req, res) => {
     if (userDoc?.status === "blocked")
       return res.status(403).json({ error: "Blocked users cannot upvote" });
 
-    const issue = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
+    const issue = await issuesCollection.findOne({
+      _id: new ObjectId(req.params.id),
+    });
     if (!issue) return res.status(404).json({ error: "Not found" });
 
     if (issue.reporterEmail === email)
@@ -626,4 +663,3 @@ app.post("/issues/boost", async (req, res) => {
     res.status(500).json({ error: "Boost failed" });
   }
 });
-
