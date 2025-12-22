@@ -145,15 +145,25 @@ app.patch("/admin/users/status/:id", async (req, res) => {
 app.get("/admin/stats", async (_, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
+    const totalStaff = await usersCollection.countDocuments({ role: "staff" });
     const totalIssues = await issuesCollection.countDocuments();
-    const premiumUsers = await usersCollection.countDocuments({ premium: true });
-    const staffCount = await usersCollection.countDocuments({ role: "staff" });
+    const pendingIssues = await issuesCollection.countDocuments({
+      status: "pending",
+    });
+    const inProgressIssues = await issuesCollection.countDocuments({
+      status: "in-progress",
+    });
+    const resolvedIssues = await issuesCollection.countDocuments({
+      status: "resolved",
+    });
 
     res.send({
       totalUsers,
+      totalStaff,
       totalIssues,
-      premiumUsers,
-      staffCount,
+      pendingIssues,
+      inProgressIssues,
+      resolvedIssues,
     });
   } catch {
     res.status(500).json({ error: "Admin stats failed" });
@@ -264,12 +274,16 @@ app.get("/admin/payments", async (_, res) => {
 // ========================
 app.get("/admin/payments/summary", async (_, res) => {
   try {
-    const revenue = await paymentsCollection.aggregate([
-      { $match: { type: "premium", status: "paid" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]).toArray();
+    const revenue = await paymentsCollection
+      .aggregate([
+        { $match: { type: "premium", status: "paid" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ])
+      .toArray();
 
-    const premiumUsers = await usersCollection.countDocuments({ premium: true });
+    const premiumUsers = await usersCollection.countDocuments({
+      premium: true,
+    });
 
     res.send({
       totalRevenue: revenue[0]?.total || 0,
@@ -334,7 +348,7 @@ app.get("/issues", async (req, res) => {
       q.$or = [
         { title: { $regex: s, $options: "i" } },
         { location: { $regex: s, $options: "i" } },
-        { category: { $regex: s, $options: "i" } }
+        { category: { $regex: s, $options: "i" } },
       ];
     }
 
@@ -428,7 +442,7 @@ app.patch("/issues/assign/:id", async (req, res) => {
 });
 
 // ========================
-// Staff Assigned Issues 
+// Staff Assigned Issues
 // ========================
 app.get("/issues/staff/:email", async (req, res) => {
   try {
