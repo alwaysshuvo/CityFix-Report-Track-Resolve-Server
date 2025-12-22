@@ -430,6 +430,24 @@ app.post("/issues", async (req, res) => {
 });
 
 /* ===========================
+   STAFF ASSIGNED ISSUES
+=========================== */
+app.get("/issues/staff/:email", async (req, res) => {
+  try {
+    const email = req.params.email;
+
+    const list = await issuesCollection
+      .find({ "assignedStaff.email": email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json(list);
+  } catch (err) {
+    res.status(500).json({ error: "Failed to load assigned issues" });
+  }
+});
+
+/* ===========================
    ASSIGN STAFF
 =========================== */
 app.patch("/issues/assign/:id", async (req, res) => {
