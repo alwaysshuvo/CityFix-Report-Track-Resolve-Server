@@ -77,18 +77,30 @@ app.post("/users", async (req, res) => {
       createdAt: new Date(),
     });
 
-    res.send({ insertedId: result.insertedId });
+    res.json({ insertedId: result.insertedId });
   } catch {
     res.status(500).json({ message: "User registration error" });
   }
 });
 
 // ========================
-// Get One User
+// Get One User (safe fallback)
 // ========================
 app.get("/users/:email", async (req, res) => {
-  const user = await usersCollection.findOne({ email: req.params.email });
-  res.send(user);
+  try {
+    const user = await usersCollection.findOne({ email: req.params.email });
+    if (!user) {
+      return res.json({
+        email: req.params.email,
+        role: "citizen",
+        premium: false,
+        status: "active",
+      });
+    }
+    res.json(user);
+  } catch {
+    res.status(500).json({ error: "Fetch failed" });
+  }
 });
 
 // ========================
@@ -146,19 +158,16 @@ app.get("/admin/stats", async (_, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
     const totalStaff = await usersCollection.countDocuments({ role: "staff" });
-    const totalIssues = await issuesCollection.countDocuments();
-    const pendingIssues = await issuesCollection.countDocuments({
-      status: "pending",
-    });
-    const inProgressIssues = await issuesCollection.countDocuments({
-      status: "in-progress",
-    });
-    const resolvedIssues = await issuesCollection.countDocuments({
-      status: "resolved",
-    });
+    const totalCitizens = await usersCollection.countDocuments({ role: "citizen" });
 
-    res.send({
+    const totalIssues = await issuesCollection.countDocuments();
+    const pendingIssues = await issuesCollection.countDocuments({ status: "pending" });
+    const inProgressIssues = await issuesCollection.countDocuments({ status: "in-progress" });
+    const resolvedIssues = await issuesCollection.countDocuments({ status: "resolved" });
+
+    res.json({
       totalUsers,
+      totalCitizens,
       totalStaff,
       totalIssues,
       pendingIssues,
@@ -195,7 +204,7 @@ app.post("/create-checkout-session", async (req, res) => {
     });
 
     res.json({ url: session.url });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Stripe session failed" });
   }
 });
@@ -248,7 +257,7 @@ app.get("/payments/user/:email", async (req, res) => {
       .sort({ date: -1 })
       .toArray();
 
-    res.send(list);
+    res.json(list);
   } catch {
     res.status(500).json({ error: "User payments fetch failed" });
   }
@@ -263,7 +272,7 @@ app.get("/admin/payments", async (_, res) => {
       .find({})
       .sort({ date: -1 })
       .toArray();
-    res.send(payments);
+    res.json(payments);
   } catch {
     res.status(500).json({ error: "Failed to load payments" });
   }
@@ -285,7 +294,7 @@ app.get("/admin/payments/summary", async (_, res) => {
       premium: true,
     });
 
-    res.send({
+    res.json({
       totalRevenue: revenue[0]?.total || 0,
       premiumUsers,
     });
@@ -299,7 +308,7 @@ app.get("/admin/payments/summary", async (_, res) => {
 // ========================
 app.get("/staff", async (_, res) => {
   const list = await usersCollection.find({ role: "staff" }).toArray();
-  res.send(list);
+  res.json(list);
 });
 
 // ========================
@@ -309,7 +318,7 @@ app.get("/issues/count/:email", async (req, res) => {
   const count = await issuesCollection.countDocuments({
     reporterEmail: req.params.email,
   });
-  res.send({ count });
+  res.json({ count });
 });
 
 // ========================
@@ -322,7 +331,7 @@ app.get("/issues/user/:email", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.send(issues);
+    res.json(issues);
   } catch {
     res.status(500).json({ error: "User issue fetch failed" });
   }
@@ -361,7 +370,7 @@ app.get("/issues", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.send({ total, issues });
+    res.json({ total, issues });
   } catch {
     res.status(500).json({ message: "Issue query failed" });
   }
@@ -377,7 +386,7 @@ app.get("/issues/:id", async (req, res) => {
     });
 
     if (!issue) return res.status(404).json({ message: "Not found" });
-    res.send(issue);
+    res.json(issue);
   } catch {
     res.status(400).json({ message: "Invalid Issue ID" });
   }
@@ -414,7 +423,7 @@ app.post("/issues", async (req, res) => {
   };
 
   const result = await issuesCollection.insertOne(issue);
-  res.send({ insertedId: result.insertedId });
+  res.json({ insertedId: result.insertedId });
 });
 
 // ========================
@@ -438,7 +447,7 @@ app.patch("/issues/assign/:id", async (req, res) => {
     }
   );
 
-  res.send({ success: true });
+  res.json({ success: true });
 });
 
 // ========================
@@ -451,7 +460,7 @@ app.get("/issues/staff/:email", async (req, res) => {
       .sort({ createdAt: -1 })
       .toArray();
 
-    res.send(list);
+    res.json(list);
   } catch {
     res.status(500).json({ error: "Failed to load staff assigned issues" });
   }
