@@ -563,22 +563,33 @@ app.patch("/issues/upvote/:id", async (req, res) => {
  * ASSIGN STAFF
  ========================= */
 app.patch("/issues/assign/:id", async (req, res) => {
-  await issuesCollection.updateOne(
-    { _id: new ObjectId(req.params.id) },
-    {
-      $set: { assignedStaff: req.body },
-      $push: {
-        timeline: {
-          status: "assigned",
-          message: `Assigned to ${req.body.name}`,
-          by: "admin",
-          time: new Date(),
+  const { name, email } = req.body;
+
+  try {
+    await issuesCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      {
+        $set: {
+          assignedStaff: { name, email },
+          status: "in-progress"
         },
-      },
-    }
-  );
-  res.json({ success: true });
+        $push: {
+          timeline: {
+            status: "assigned",
+            message: `Assigned to ${name}`,
+            by: "admin",
+            time: new Date()
+          }
+        }
+      }
+    );
+
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "Assign failed" });
+  }
 });
+
 
 /** =========================
  * STAFF VIEW ASSIGNED (Pagination + Filter + Search)
