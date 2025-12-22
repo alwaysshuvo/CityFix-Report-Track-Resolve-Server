@@ -139,12 +139,20 @@ app.get("/admin/stats", async (_, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
     const totalStaff = await usersCollection.countDocuments({ role: "staff" });
-    const totalCitizens = await usersCollection.countDocuments({ role: "citizen" });
+    const totalCitizens = await usersCollection.countDocuments({
+      role: "citizen",
+    });
 
     const totalIssues = await issuesCollection.countDocuments();
-    const pendingIssues = await issuesCollection.countDocuments({ status: "pending" });
-    const inProgressIssues = await issuesCollection.countDocuments({ status: "in-progress" });
-    const resolvedIssues = await issuesCollection.countDocuments({ status: "resolved" });
+    const pendingIssues = await issuesCollection.countDocuments({
+      status: "pending",
+    });
+    const inProgressIssues = await issuesCollection.countDocuments({
+      status: "in-progress",
+    });
+    const resolvedIssues = await issuesCollection.countDocuments({
+      status: "resolved",
+    });
 
     res.json({
       totalUsers,
@@ -178,8 +186,8 @@ app.post("/create-checkout-session", async (req, res) => {
           quantity: 1,
         },
       ],
-      success_url: `http://localhost:5173/payment-success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `http://localhost:5173/payment-cancel`,
+      success_url: `https://cityfix-client.vercel.app/payment-success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `https://cityfix-client.vercel.app/payment-cancel`,
     });
 
     res.json({ url: session.url });
@@ -193,10 +201,7 @@ app.post("/payment/success", async (req, res) => {
   try {
     const { email, session_id } = req.body;
 
-    await usersCollection.updateOne(
-      { email },
-      { $set: { premium: true } }
-    );
+    await usersCollection.updateOne({ email }, { $set: { premium: true } });
 
     await paymentsCollection.insertOne({
       email,
@@ -245,12 +250,16 @@ app.get("/admin/payments", async (_, res) => {
 // Admin Payment Summary
 app.get("/admin/payments/summary", async (_, res) => {
   try {
-    const revenue = await paymentsCollection.aggregate([
-      { $match: { type: "premium", status: "paid" } },
-      { $group: { _id: null, total: { $sum: "$amount" } } },
-    ]).toArray();
+    const revenue = await paymentsCollection
+      .aggregate([
+        { $match: { type: "premium", status: "paid" } },
+        { $group: { _id: null, total: { $sum: "$amount" } } },
+      ])
+      .toArray();
 
-    const premiumUsers = await usersCollection.countDocuments({ premium: true });
+    const premiumUsers = await usersCollection.countDocuments({
+      premium: true,
+    });
 
     res.json({
       totalRevenue: revenue[0]?.total || 0,
