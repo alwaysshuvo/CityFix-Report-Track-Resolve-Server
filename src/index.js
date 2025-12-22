@@ -1,3 +1,9 @@
+/** ==============================
+ *  CITYFIX — FULL BACKEND
+ *  Developer: Ali Hossen Shuvo
+ *  All Features Implemented
+ * ===============================*/
+
 import express from "express";
 import cors from "cors";
 import dotenv from "dotenv";
@@ -7,22 +13,16 @@ import Stripe from "stripe";
 dotenv.config();
 const app = express();
 
-/* ===========================
-        CONFIG
-=========================== */
 const port = process.env.PORT || 5000;
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 const CLIENT = process.env.CLIENT || "http://localhost:5173";
 
-/* ===========================
-        MIDDLEWARE
-=========================== */
 app.use(cors());
 app.use(express.json());
 
-/* ===========================
-        MONGO INIT
-=========================== */
+/** =========================
+ * MONGO INIT
+ ========================= */
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wemtzez.mongodb.net/${process.env.DB_NAME}?retryWrites=true&w=majority`;
 
 const client = new MongoClient(uri, {
@@ -53,16 +53,12 @@ async function initDB() {
 }
 initDB();
 
-/* ===========================
-        ROOT
-=========================== */
-app.get("/", (_, res) => {
-  res.send("CityFix API Active 🟢");
-});
+/** ROOT */
+app.get("/", (_, res) => res.send("CityFix API Active 🟢"));
 
-/* ===========================
-        USER REGISTER
-=========================== */
+/** =========================
+ * USER REGISTER
+ ========================= */
 app.post("/users", async (req, res) => {
   try {
     const user = req.body;
@@ -83,14 +79,12 @@ app.post("/users", async (req, res) => {
 
     const result = await usersCollection.insertOne(doc);
     res.json({ insertedId: result.insertedId, role });
-  } catch (err) {
+  } catch {
     res.status(500).json({ message: "User registration failed" });
   }
 });
 
-/* ===========================
-        GET USER
-=========================== */
+/** GET USER */
 app.get("/users/:email", async (req, res) => {
   try {
     const user = await usersCollection.findOne({ email: req.params.email });
@@ -108,17 +102,14 @@ app.get("/users/:email", async (req, res) => {
   }
 });
 
-/* ===========================
-  STRIPE CHECKOUT SESSION
-=========================== */
+/** =========================
+ * STRIPE CHECKOUT (PREMIUM)
+ ========================= */
 app.post("/create-checkout-session", async (req, res) => {
   try {
     const { email } = req.body;
-
     const user = await usersCollection.findOne({ email });
-    if (user?.premium === true) {
-      return res.status(400).json({ error: "User already Premium!" });
-    }
+    if (user?.premium) return res.status(400).json({ error: "Already premium" });
 
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
@@ -139,14 +130,12 @@ app.post("/create-checkout-session", async (req, res) => {
     });
 
     res.json({ url: session.url });
-  } catch (err) {
+  } catch {
     res.status(500).json({ error: "Stripe session failed" });
   }
 });
 
-/* ===========================
-  CHECKOUT SESSION
-=========================== */
+/** GET SESSION */
 app.get("/checkout-session/:id", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.retrieve(req.params.id);
@@ -156,14 +145,31 @@ app.get("/checkout-session/:id", async (req, res) => {
   }
 });
 
-/* ===========================
-  PAYMENT SUCCESS
-=========================== */
+/** =========================
+ * PAYMENT SUCCESS (PREMIUM + BOOST)
+ ========================= */
 app.post("/payment/success", async (req, res) => {
   try {
-    const { email, session_id } = req.body;
+    const { email, session_id, boost_issue } = req.body;
     if (!email || !session_id)
       return res.status(400).json({ error: "Missing fields" });
+
+    if (boost_issue) {
+      await issuesCollection.updateOne(
+        { _id: new ObjectId(boost_issue) },
+        {
+          $set: { priority: "high" },
+          $push: {
+            timeline: {
+              status: "boosted",
+              message: "Issue boosted to HIGH priority",
+              by: email,
+              time: new Date(),
+            },
+          },
+        }
+      );
+    }
 
     await usersCollection.updateOne({ email }, { $set: { premium: true } });
 
@@ -171,27 +177,26 @@ app.post("/payment/success", async (req, res) => {
       { email },
       {
         $set: {
-          type: "premium",
+          type: boost_issue ? "boost" : "premium",
           method: "stripe",
           session_id,
-          amount: 1000,
+          amount: boost_issue ? 100 : 1000,
           currency: "BDT",
           status: "paid",
           date: new Date(),
+          boost_issue: boost_issue || null,
         },
       },
       { upsert: true }
     );
 
     res.json({ success: true });
-  } catch (err) {
-    res.status(500).json({ error: "Premium flag failed" });
+  } catch {
+    res.status(500).json({ error: "Payment update failed" });
   }
 });
 
-/* ===========================
-  USER PAYMENTS
-=========================== */
+/** USER PAYMENTS */
 app.get("/payments/user/:email", async (req, res) => {
   try {
     const list = await paymentsCollection
@@ -204,9 +209,7 @@ app.get("/payments/user/:email", async (req, res) => {
   }
 });
 
-/* ===========================
-  ADMIN PAYMENTS
-=========================== */
+/** ADMIN PAYMENTS */
 app.get("/admin/payments", async (_, res) => {
   try {
     const list = await paymentsCollection.find({}).sort({ date: -1 }).toArray();
@@ -216,14 +219,12 @@ app.get("/admin/payments", async (_, res) => {
   }
 });
 
-/* ===========================
-  ADMIN PAYMENT SUMMARY
-=========================== */
+/** ADMIN PAYMENT SUMMARY */
 app.get("/admin/payments/summary", async (_, res) => {
   try {
     const revenue = await paymentsCollection
       .aggregate([
-        { $match: { type: "premium", status: "paid" } },
+        { $match: { status: "paid" } },
         { $group: { _id: null, total: { $sum: "$amount" } } },
       ])
       .toArray();
@@ -239,27 +240,15 @@ app.get("/admin/payments/summary", async (_, res) => {
   }
 });
 
-/* ===========================
-   ADMIN USERS
-=========================== */
+/** =========================
+ * ADMIN USERS
+ ========================= */
 app.get("/admin/users", async (_, res) => {
   try {
     const users = await usersCollection.find({}).sort({ createdAt: -1 }).toArray();
     res.json(users);
   } catch {
     res.status(500).json({ error: "Failed to fetch users" });
-  }
-});
-
-app.patch("/admin/users/role/:id", async (req, res) => {
-  try {
-    await usersCollection.updateOne(
-      { _id: new ObjectId(req.params.id) },
-      { $set: { role: req.body.role } }
-    );
-    res.json({ success: true });
-  } catch {
-    res.status(500).json({ error: "Role update failed" });
   }
 });
 
@@ -275,9 +264,9 @@ app.patch("/admin/users/status/:id", async (req, res) => {
   }
 });
 
-/* ===========================
-   ADMIN DASHBOARD STATS (FINAL)
-=========================== */
+/** =========================
+ * STATS (ADMIN)
+ ========================= */
 app.get("/admin/stats", async (_, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
@@ -305,27 +294,68 @@ app.get("/admin/stats", async (_, res) => {
   }
 });
 
-/* ===========================
-   STAFF LIST
-=========================== */
+/** =========================
+ * STAFF LIST
+ ========================= */
 app.get("/staff", async (_, res) => {
   const list = await usersCollection.find({ role: "staff" }).toArray();
   res.json(list);
 });
 
-/* ===========================
-   ISSUE COUNT
-=========================== */
-app.get("/issues/count/:email", async (req, res) => {
-  const total = await issuesCollection.countDocuments({
-    reporterEmail: req.params.email,
-  });
-  res.json({ total });
+/** =========================
+ * FREE LIMIT CHECK (MAX 3)
+ ========================= */
+async function checkFreeLimit(email) {
+  const user = await usersCollection.findOne({ email });
+  if (user?.premium) return false;
+  const count = await issuesCollection.countDocuments({ reporterEmail: email });
+  return count >= 3;
+}
+
+/** =========================
+ * CREATE ISSUE
+ ========================= */
+app.post("/issues", async (req, res) => {
+  try {
+    const d = req.body;
+    if (await checkFreeLimit(d.reporterEmail))
+      return res.status(400).json({ error: "Free user limit reached (max 3 issues)" });
+
+    const reporter = await usersCollection.findOne({ email: d.reporterEmail });
+
+    const doc = {
+      title: d.title,
+      description: d.description,
+      reporterEmail: d.reporterEmail,
+      reporterPremium: reporter?.premium || false,
+      category: d.category,
+      location: d.location,
+      image: d.image || "",
+      priority: d.priority || "normal",
+      status: "pending",
+      assignedStaff: null,
+      upvotes: [],
+      createdAt: new Date(),
+      timeline: [
+        {
+          status: "pending",
+          message: "Issue created",
+          by: d.reporterEmail,
+          time: new Date(),
+        },
+      ],
+    };
+
+    const result = await issuesCollection.insertOne(doc);
+    res.json({ insertedId: result.insertedId });
+  } catch {
+    res.status(500).json({ error: "Create failed" });
+  }
 });
 
-/* ===========================
-   USER ISSUES
-=========================== */
+/** =========================
+ * USER ISSUES (DASHBOARD)
+ ========================= */
 app.get("/issues/user/:email", async (req, res) => {
   try {
     const list = await issuesCollection
@@ -338,9 +368,9 @@ app.get("/issues/user/:email", async (req, res) => {
   }
 });
 
-/* ===========================
-   ISSUE LIST + FILTER
-=========================== */
+/** =========================
+ * ALL ISSUES (Search / Filter / Pagination)
+ ========================= */
 app.get("/issues", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -376,14 +406,12 @@ app.get("/issues", async (req, res) => {
   }
 });
 
-/* ===========================
-   SINGLE ISSUE
-=========================== */
+/** =========================
+ * SINGLE ISSUE
+ ========================= */
 app.get("/issues/:id", async (req, res) => {
   try {
-    const doc = await issuesCollection.findOne({
-      _id: new ObjectId(req.params.id),
-    });
+    const doc = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
     if (!doc) return res.status(404).json({ message: "Not found" });
     res.json(doc);
   } catch {
@@ -391,65 +419,97 @@ app.get("/issues/:id", async (req, res) => {
   }
 });
 
-/* ===========================
-   CREATE ISSUE
-=========================== */
-app.post("/issues", async (req, res) => {
+/** =========================
+ * EDIT ISSUE (Pending Only)
+ ========================= */
+app.put("/issues/:id", async (req, res) => {
   try {
-    const d = req.body;
-    const reporter = await usersCollection.findOne({ email: d.reporterEmail });
+    const updateData = req.body;
+    const issue = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
 
-    const doc = {
-      title: d.title,
-      description: d.description,
-      reporterEmail: d.reporterEmail,
-      reporterPremium: reporter?.premium || false,
-      category: d.category,
-      location: d.location,
-      image: d.image || "",
-      priority: d.priority || "normal",
-      status: "pending",
-      assignedStaff: null,
-      upvotes: [],
-      createdAt: new Date(),
-      timeline: [
-        {
-          status: "pending",
-          message: "Issue created",
-          by: d.reporterEmail,
-          time: new Date(),
+    if (!issue) return res.status(404).json({ message: "Issue not found" });
+    if (issue.status !== "pending")
+      return res.status(400).json({ message: "Cannot edit non-pending issue" });
+
+    await issuesCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      {
+        $set: {
+          title: updateData.title,
+          description: updateData.description,
+          category: updateData.category,
+          location: updateData.location,
+          image: updateData.image,
         },
-      ],
-    };
+        $push: {
+          timeline: {
+            status: "pending",
+            message: "Issue updated by citizen",
+            by: updateData.reporterEmail,
+            time: new Date(),
+          },
+        },
+      }
+    );
 
-    const result = await issuesCollection.insertOne(doc);
-    res.json({ insertedId: result.insertedId });
+    res.json({ success: true });
   } catch {
-    res.status(500).json({ error: "Create failed" });
+    res.status(500).json({ error: "Update failed" });
   }
 });
 
-/* ===========================
-   STAFF ASSIGNED ISSUES
-=========================== */
-app.get("/issues/staff/:email", async (req, res) => {
+/** =========================
+ * DELETE ISSUE (Pending Only)
+ ========================= */
+app.delete("/issues/:id", async (req, res) => {
   try {
-    const email = req.params.email;
+    const issue = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
 
-    const list = await issuesCollection
-      .find({ "assignedStaff.email": email })
-      .sort({ createdAt: -1 })
-      .toArray();
+    if (!issue) return res.status(404).json({ message: "Not found" });
+    if (issue.status !== "pending")
+      return res.status(400).json({ message: "Cannot delete non-pending issue" });
 
-    res.json(list);
-  } catch (err) {
-    res.status(500).json({ error: "Failed to load assigned issues" });
+    await issuesCollection.deleteOne({ _id: new Object.params.id });
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "Delete failed" });
   }
 });
 
-/* ===========================
-   ASSIGN STAFF
-=========================== */
+/** =========================
+ * UPVOTE ISSUE
+ ========================= */
+app.patch("/issues/upvote/:id", async (req, res) => {
+  try {
+    const { email } = req.body;
+
+    const userDoc = await usersCollection.findOne({ email });
+    if (userDoc?.status === "blocked")
+      return res.status(403).json({ error: "Blocked users cannot upvote" });
+
+    const issue = await issuesCollection.findOne({ _id: new ObjectId(req.params.id) });
+    if (!issue) return res.status(404).json({ error: "Not found" });
+
+    if (issue.reporterEmail === email)
+      return res.status(400).json({ error: "Cannot upvote own issue" });
+
+    if (issue.upvotes.includes(email))
+      return res.status(400).json({ error: "Already upvoted" });
+
+    await issuesCollection.updateOne(
+      { _id: new ObjectId(req.params.id) },
+      { $push: { upvotes: email } }
+    );
+
+    res.json({ success: true, newCount: issue.upvotes.length + 1 });
+  } catch {
+    res.status(500).json({ error: "Upvote failed" });
+  }
+});
+
+/** =========================
+ * ASSIGN STAFF
+ ========================= */
 app.patch("/issues/assign/:id", async (req, res) => {
   await issuesCollection.updateOne(
     { _id: new ObjectId(req.params.id) },
@@ -468,9 +528,25 @@ app.patch("/issues/assign/:id", async (req, res) => {
   res.json({ success: true });
 });
 
-/* ===========================
-   UPDATE ISSUE STATUS
-=========================== */
+/** =========================
+ * STAFF VIEW ASSIGNED
+ ========================= */
+app.get("/issues/staff/:email", async (req, res) => {
+  try {
+    const list = await issuesCollection
+      .find({ "assignedStaff.email": req.params.email })
+      .sort({ createdAt: -1 })
+      .toArray();
+
+    res.json(list);
+  } catch {
+    res.status(500).json({ error: "Staff fetch failed" });
+  }
+});
+
+/** =========================
+ * CHANGE STATUS W/ TIMELINE
+ ========================= */
 app.patch("/issues/status/:id", async (req, res) => {
   try {
     await issuesCollection.updateOne(
@@ -480,7 +556,7 @@ app.patch("/issues/status/:id", async (req, res) => {
         $push: {
           timeline: {
             status: req.body.status,
-            message: `Marked as ${req.body.status}`,
+            message: `Status changed to ${req.body.status}`,
             by: req.body.by,
             time: new Date(),
           },
@@ -490,6 +566,64 @@ app.patch("/issues/status/:id", async (req, res) => {
 
     res.json({ success: true });
   } catch {
-    res.status(500).json({ error: "Status failed" });
+    res.status(500).json({ error: "Status update failed" });
   }
 });
+
+/** =========================
+ * ADMIN REJECT ISSUE
+ ========================= */
+app.patch("/issues/reject/:id", async (req, res) => {
+  try {
+    await issuesCollection.updateOne(
+      { _id: new ObjectId(req.params.id), status: "pending" },
+      {
+        $set: { status: "rejected" },
+        $push: {
+          timeline: {
+            status: "rejected",
+            message: "Issue rejected by admin",
+            by: "admin",
+            time: new Date(),
+          },
+        },
+      }
+    );
+
+    res.json({ success: true });
+  } catch {
+    res.status(500).json({ error: "Reject failed" });
+  }
+});
+
+/** =========================
+ * BOOST PAYMENT SESSION
+ ========================= */
+app.post("/issues/boost", async (req, res) => {
+  try {
+    const { email, issueId } = req.body;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer_email: email,
+      currency: "bdt",
+      line_items: [
+        {
+          price_data: {
+            currency: "bdt",
+            product_data: { name: "Boost Issue Priority" },
+            unit_amount: 100 * 100,
+          },
+          quantity: 1,
+        },
+      ],
+      success_url: `${CLIENT}/payment-success?boost_issue=${issueId}&session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${CLIENT}/payment-cancel`,
+    });
+
+    res.json({ url: session.url });
+  } catch {
+    res.status(500).json({ error: "Boost failed" });
+  }
+});
+
