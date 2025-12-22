@@ -369,10 +369,23 @@ app.post("/issues", async (req, res) => {
 app.get("/issues/user/:email", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
-    const limit = parseInt(req.query.limit) || 5; // default 5 per page
+    const limit = parseInt(req.query.limit) || 5;
     const skip = (page - 1) * limit;
 
     const filter = { reporterEmail: req.params.email };
+
+    if (req.query.status) {
+      filter.status = req.query.status;
+    }
+
+    if (req.query.search) {
+      const s = req.query.search;
+      filter.$or = [
+        { title: { $regex: s, $options: "i" } },
+        { category: { $regex: s, $options: "i" } },
+        { location: { $regex: s, $options: "i" } }
+      ];
+    }
 
     const total = await issuesCollection.countDocuments(filter);
 
@@ -394,6 +407,7 @@ app.get("/issues/user/:email", async (req, res) => {
     res.status(500).json({ error: "Fetch failed" });
   }
 });
+
 
 /** =========================
  * ALL ISSUES (Search / Filter / Pagination)
