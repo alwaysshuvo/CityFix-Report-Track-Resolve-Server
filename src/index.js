@@ -518,12 +518,13 @@ app.delete("/issues/:id", async (req, res) => {
         .status(400)
         .json({ message: "Cannot delete non-pending issue" });
 
-    await issuesCollection.deleteOne({ _id: new Object.params.id() });
+    await issuesCollection.deleteOne({ _id: new ObjectId(req.params.id) });
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "Delete failed" });
   }
 });
+
 
 /** =========================
  * UPVOTE ISSUE
@@ -580,16 +581,43 @@ app.patch("/issues/assign/:id", async (req, res) => {
 });
 
 /** =========================
- * STAFF VIEW ASSIGNED
+ * STAFF VIEW ASSIGNED (Pagination + Filter + Search)
  ========================= */
 app.get("/issues/staff/:email", async (req, res) => {
   try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 5;
+    const skip = (page - 1) * limit;
+
+    const q = { "assignedStaff.email": req.params.email };
+
+    if (req.query.status) q.status = req.query.status;
+
+    if (req.query.search) {
+      const s = req.query.search;
+      q.$or = [
+        { title: { $regex: s, $options: "i" } },
+        { category: { $regex: s, $options: "i" } },
+        { location: { $regex: s, $options: "i" } },
+      ];
+    }
+
+    const total = await issuesCollection.countDocuments(q);
+
     const list = await issuesCollection
-      .find({ "assignedStaff.email": req.params.email })
+      .find(q)
       .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
       .toArray();
 
-    res.json(list);
+    res.json({
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+      issues: list,
+    });
   } catch {
     res.status(500).json({ error: "Staff fetch failed" });
   }
