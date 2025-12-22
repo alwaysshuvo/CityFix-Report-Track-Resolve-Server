@@ -8,20 +8,14 @@ dotenv.config();
 const app = express();
 const port = process.env.PORT || 5000;
 
-// ========================
 // Middleware
-// ========================
 app.use(cors());
 app.use(express.json());
 
-// ========================
 // Stripe Init
-// ========================
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY);
 
-// ========================
 // MongoDB Setup
-// ========================
 const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.wemtzez.mongodb.net/${process.env.DB_NAME}?retryWrites=true&w=majority`;
 
 const client = new MongoClient(uri, {
@@ -44,28 +38,28 @@ async function initDB() {
   issuesCollection = db.collection("issues");
   paymentsCollection = db.collection("payments");
 
-  console.log("🔥 MongoDB Connected");
+  console.log("🔥 MongoDB Connected Successfully");
   app.listen(port, () =>
-    console.log(`🚀 Server running → http://localhost:${port}`)
+    console.log(`🚀 API running at http://localhost:${port}`)
   );
 }
 initDB();
 
-// ========================
 // Root
-// ========================
 app.get("/", (_, res) => res.send("CityFix API Active 🟢"));
 
-// ========================
-// Auth → Register User
-// ========================
+// Auth — Register User
 app.post("/users", async (req, res) => {
   try {
     const user = req.body;
-    if (!user.email) return res.status(400).json({ message: "Email required" });
+    if (!user.email) {
+      return res.status(400).json({ message: "Email required" });
+    }
 
     const exists = await usersCollection.findOne({ email: user.email });
-    if (exists) return res.status(409).json({ message: "User exists" });
+    if (exists) {
+      return res.status(200).json(exists); // safe fallback
+    }
 
     const role = user.email === process.env.ADMIN_EMAIL ? "admin" : "citizen";
 
@@ -77,15 +71,13 @@ app.post("/users", async (req, res) => {
       createdAt: new Date(),
     });
 
-    res.json({ insertedId: result.insertedId });
-  } catch {
-    res.status(500).json({ message: "User registration error" });
+    res.json({ insertedId: result.insertedId, role });
+  } catch (err) {
+    res.status(500).json({ message: "User registration error", error: err });
   }
 });
 
-// ========================
 // Get One User (safe fallback)
-// ========================
 app.get("/users/:email", async (req, res) => {
   try {
     const user = await usersCollection.findOne({ email: req.params.email });
@@ -103,57 +95,46 @@ app.get("/users/:email", async (req, res) => {
   }
 });
 
-// ========================
-// Admin → Get All Users
-// ========================
+// Admin — Get All Users
 app.get("/admin/users", async (_, res) => {
   try {
     const users = await usersCollection
-      .find({}, { projection: { password: 0 } })
+      .find({})
       .sort({ createdAt: -1 })
       .toArray();
-
-    res.send(users);
+    res.json(users);
   } catch {
     res.status(500).json({ error: "Failed to load users" });
   }
 });
 
-// ========================
-// Admin → Change Role
-// ========================
+// Admin — Change Role
 app.patch("/admin/users/role/:id", async (req, res) => {
   try {
     await usersCollection.updateOne(
       { _id: new ObjectId(req.params.id) },
       { $set: { role: req.body.role } }
     );
-
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "Failed to update role" });
   }
 });
 
-// ========================
-// Admin → Block / Unblock User
-// ========================
+// Admin — Block / Unblock
 app.patch("/admin/users/status/:id", async (req, res) => {
   try {
     await usersCollection.updateOne(
       { _id: new ObjectId(req.params.id) },
       { $set: { status: req.body.status } }
     );
-
     res.json({ success: true });
   } catch {
     res.status(500).json({ error: "Failed to update status" });
   }
 });
 
-// ========================
-// Admin → Stats Dashboard
-// ========================
+// Admin — Stats
 app.get("/admin/stats", async (_, res) => {
   try {
     const totalUsers = await usersCollection.countDocuments();
@@ -179,9 +160,7 @@ app.get("/admin/stats", async (_, res) => {
   }
 });
 
-// ========================
-// Stripe Checkout (BDT)
-// ========================
+// Stripe Checkout
 app.post("/create-checkout-session", async (req, res) => {
   try {
     const session = await stripe.checkout.sessions.create({
@@ -209,26 +188,15 @@ app.post("/create-checkout-session", async (req, res) => {
   }
 });
 
-// ========================
-// Retrieve Checkout Session
-// ========================
-app.get("/checkout-session/:id", async (req, res) => {
-  try {
-    const session = await stripe.checkout.sessions.retrieve(req.params.id);
-    res.json(session);
-  } catch {
-    res.status(500).json({ error: "Session fetch failed" });
-  }
-});
-
-// ========================
-// Payment Success → Mark Premium
-// ========================
+// Payment Success
 app.post("/payment/success", async (req, res) => {
   try {
     const { email, session_id } = req.body;
 
-    await usersCollection.updateOne({ email }, { $set: { premium: true } });
+    await usersCollection.updateOne(
+      { email },
+      { $set: { premium: true } }
+    );
 
     await paymentsCollection.insertOne({
       email,
@@ -247,9 +215,7 @@ app.post("/payment/success", async (req, res) => {
   }
 });
 
-// ========================
 // User Payment History
-// ========================
 app.get("/payments/user/:email", async (req, res) => {
   try {
     const list = await paymentsCollection
@@ -263,9 +229,7 @@ app.get("/payments/user/:email", async (req, res) => {
   }
 });
 
-// ========================
-// Admin → All payments list
-// ========================
+// Admin Payments
 app.get("/admin/payments", async (_, res) => {
   try {
     const payments = await paymentsCollection
@@ -278,21 +242,15 @@ app.get("/admin/payments", async (_, res) => {
   }
 });
 
-// ========================
-// Admin → Payment Summary
-// ========================
+// Admin Payment Summary
 app.get("/admin/payments/summary", async (_, res) => {
   try {
-    const revenue = await paymentsCollection
-      .aggregate([
-        { $match: { type: "premium", status: "paid" } },
-        { $group: { _id: null, total: { $sum: "$amount" } } },
-      ])
-      .toArray();
+    const revenue = await paymentsCollection.aggregate([
+      { $match: { type: "premium", status: "paid" } },
+      { $group: { _id: null, total: { $sum: "$amount" } } },
+    ]).toArray();
 
-    const premiumUsers = await usersCollection.countDocuments({
-      premium: true,
-    });
+    const premiumUsers = await usersCollection.countDocuments({ premium: true });
 
     res.json({
       totalRevenue: revenue[0]?.total || 0,
@@ -303,17 +261,13 @@ app.get("/admin/payments/summary", async (_, res) => {
   }
 });
 
-// ========================
 // Staff List
-// ========================
 app.get("/staff", async (_, res) => {
   const list = await usersCollection.find({ role: "staff" }).toArray();
   res.json(list);
 });
 
-// ========================
-// Issue Count by User
-// ========================
+// Issue Count By User
 app.get("/issues/count/:email", async (req, res) => {
   const count = await issuesCollection.countDocuments({
     reporterEmail: req.params.email,
@@ -321,9 +275,7 @@ app.get("/issues/count/:email", async (req, res) => {
   res.json({ count });
 });
 
-// ========================
-// User Specific Issues
-// ========================
+// User Issues
 app.get("/issues/user/:email", async (req, res) => {
   try {
     const issues = await issuesCollection
@@ -337,9 +289,7 @@ app.get("/issues/user/:email", async (req, res) => {
   }
 });
 
-// ========================
-// Issue List + Filters + Pagination
-// ========================
+// Issues List with Filters
 app.get("/issues", async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
@@ -362,7 +312,6 @@ app.get("/issues", async (req, res) => {
     }
 
     const total = await issuesCollection.countDocuments(q);
-
     const issues = await issuesCollection
       .find(q)
       .skip(skip)
@@ -376,9 +325,7 @@ app.get("/issues", async (req, res) => {
   }
 });
 
-// ========================
 // Single Issue
-// ========================
 app.get("/issues/:id", async (req, res) => {
   try {
     const issue = await issuesCollection.findOne({
@@ -392,9 +339,7 @@ app.get("/issues/:id", async (req, res) => {
   }
 });
 
-// ========================
 // Create Issue
-// ========================
 app.post("/issues", async (req, res) => {
   const d = req.body;
   const reporter = await usersCollection.findOne({ email: d.reporterEmail });
@@ -426,9 +371,7 @@ app.post("/issues", async (req, res) => {
   res.json({ insertedId: result.insertedId });
 });
 
-// ========================
 // Assign Staff
-// ========================
 app.patch("/issues/assign/:id", async (req, res) => {
   const staff = req.body;
 
@@ -450,32 +393,13 @@ app.patch("/issues/assign/:id", async (req, res) => {
   res.json({ success: true });
 });
 
-// ========================
-// Staff Assigned Issues
-// ========================
-app.get("/issues/staff/:email", async (req, res) => {
-  try {
-    const list = await issuesCollection
-      .find({ "assignedStaff.email": req.params.email })
-      .sort({ createdAt: -1 })
-      .toArray();
-
-    res.json(list);
-  } catch {
-    res.status(500).json({ error: "Failed to load staff assigned issues" });
-  }
-});
-
-// ========================
-// Staff → Update Issue Status
-// ========================
+// Staff — Update Issue
 app.patch("/issues/status/:id", async (req, res) => {
   try {
-    const id = req.params.id;
     const { status, by } = req.body;
 
     await issuesCollection.updateOne(
-      { _id: new ObjectId(id) },
+      { _id: new ObjectId(req.params.id) },
       {
         $set: { status },
         $push: {
